@@ -13,8 +13,9 @@ import { DocumentUploaderService } from 'src/document-uploader/document-uploader
 
 export interface ExcelSchema {
   [key: string]: string;
-  // key = fieldName in API/db, value = columnName in Excel
+  // key = columnName in Excel, value = fieldName in API/db
 }
+
 const employeeSchema: ExcelSchema = {
   "First Name": 'firstName',
   "Last Name": 'lastName',
@@ -24,7 +25,8 @@ const employeeSchema: ExcelSchema = {
   "Date": 'date',
   "Id": 'id',
 };
-// displays vendors list
+
+// Displays vendors list and processes uploaded files
 class Event_5000 extends EventHandler {
   constructor(
     private readonly eventArgs: EventHandlerTypes,
@@ -36,28 +38,97 @@ class Event_5000 extends EventHandler {
     );
 
     // Ensure BigInt can be safely serialized
-    BigInt.prototype['toJSON'] = function () {
-      return this.toString();
-    };
+    if (!BigInt.prototype.hasOwnProperty('toJSON')) {
+      BigInt.prototype['toJSON'] = function () {
+        return this.toString();
+      };
+    }
   }
+
   async sendData(headers: Record<string, string>) {
-    console.log(headers, "it actually enters the syste", this?.queryParams);
-    const { files } = this?.queryParams;
-    const parsedFiles = JSON.parse(files);
-    const convertedFiles = parsedFiles?.map((item) => this.base64ToBuffer(item));
+    try {
+      arkLog(LogType.Log, headers, 'Event_5000', 'sendData', LogType.Request, {
+        queryParams: this?.queryParams,
+      });
 
-    console.log(convertedFiles, "this are the converted files")
+      const { files } = this?.queryParams;
+
+      if (!files) {
+      }
+
+      const parsedFiles = JSON.parse(files);
+
+      if (!Array.isArray(parsedFiles) || parsedFiles.length === 0) {
+      }
+
+      // Process all files in parallel
+      const convertedFiles = await Promise.all(
+        parsedFiles.map((base64String) => this.base64ToBuffer(headers, base64String))
+      );
+
+      arkLog(LogType.Log, headers, 'Event_5000', 'sendData', LogType.Response, {
+        filesProcessed: convertedFiles.length,
+      });
+
+      console.log('Converted files:', convertedFiles);
+
+      // Return the processed data
+      return {
+        data: convertedFiles,
+        message: 'Files processed successfully',
+        error: false,
+        status: 200,
+      };
+    } catch (error) {
+      arkLog(LogType.Error, headers, 'Event_5000', 'sendData', LogType.Exception, error);
+      
+      return {
+        data: null,
+        message: error.message || 'Failed to process files',
+        error: true,
+        status: 500,
+      };
+    }
   }
 
+  /**
+   * Convert base64 string to buffer and process the file
+   * @param headers - Request headers for logging
+   * @param base64String - Base64 encoded file string
+   * @returns Parsed file information
+   */
+  private async base64ToBuffer(
+    headers: Record<string, string>,
+    base64String: string
+  ): Promise<any> {
+    try {
+      arkLog(LogType.Log, headers, 'Event_5000', 'base64ToBuffer', LogType.Request, {
+        base64Length: base64String?.length,
+      });
 
-  async base64ToBuffer(headers: Record<string>base64String: string) {
-    const base64Data = base64String.split(',')[1] || base64String;
-    const bufferFromString = Buffer.from(base64Data, 'base64');
-    let parsedInformation = await this.documentUploaderService.processFile(headers,bufferFromString, employeeSchema, 'xlsx');
-    return parsedInformation;
+      // Remove data URL prefix if present (e.g., "data:application/vnd.ms-excel;base64,")
+      const base64Data = base64String.includes(',') 
+        ? base64String.split(',')[1] 
+        : base64String;
+
+      // Convert base64 to Buffer
+      const bufferFromString = Buffer.from(base64Data, 'base64');
+
+      // Process the file using the document uploader service
+      const parsedInformation = await this.documentUploaderService.processFile(
+        headers,
+        bufferFromString,
+        employeeSchema,
+        'xlsx'
+      );
+
+
+      return parsedInformation;
+    } catch (error) {
+      arkLog(LogType.Error, headers, 'Event_5000', 'base64ToBuffer', LogType.Exception, error);
+      throw error;
+    }
   }
-
-
 }
 
 export default Event_5000;
